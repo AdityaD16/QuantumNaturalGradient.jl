@@ -24,10 +24,14 @@ function EnergySummary(Eks::Vector{Complex{Float64}}; importance_weights=nothing
         local std_of_var
 
         if importance_weights !== nothing
-            Eks_c2 = real.(Eks_c .* importance_weights)
+            # The estimator for the mean energy is defined as X_k = E_k * w_k; therefore, the variance of X_k represents the error of the estimator.
+            std_of_mean = std(real.(Eks_c .* importance_weights))
+            
+            # The estimator for the variance of the energy is defined as X_k = (E_k - <E>)^2 * w_k; similarly, the variance of X_k represents the error of this estimator.
+            std_of_var = std(real.((Eks_c .* conj(Eks_c)) .* importance_weights))
+            
+            # The Eks are multiplied by the square root of the importance weights. This ensures that the product with (Oks * sqrt(importance_weights)) correctly recovers the importance weights to the first power.
             Eks_c = Eks_c .* sqrt.(importance_weights)
-            std_of_mean = std(Eks_c2)
-            std_of_var = std(Eks_c2 .* conj(Eks_c2))
         else
             std_of_mean = sqrt(real.(var_))
             std_of_var = std(Eks_c .* conj(Eks_c))
@@ -47,10 +51,14 @@ function EnergySummary(Eks::Vector{Float64}; importance_weights=nothing, mean_=n
     local std_of_var
 
     if importance_weights !== nothing
-        Eks_c2 = real.(Eks_c .* importance_weights)
+        # The estimator for the mean energy is defined as X_k = E_k * w_k; therefore, the variance of X_k represents the error of the estimator.
+        std_of_mean = std(real.(Eks_c .* importance_weights))
+        
+        # The estimator for the variance of the energy is defined as X_k = (E_k - <E>)^2 * w_k; similarly, the variance of X_k represents the error of this estimator.
+        std_of_var = std(real.(Eks_c .^2 .* importance_weights))
+        
+        # The Eks are multiplied by the square root of the importance weights. This ensures that the product with (Oks * sqrt(importance_weights)) correctly recovers the importance weights to the first power.
         Eks_c = Eks_c .* sqrt.(importance_weights)
-        std_of_mean = std(Eks_c2)
-        std_of_var = std(Eks_c2 .* Eks_c2)
     else
         std_of_mean = sqrt(real.(var_))
         std_of_var = std(Eks_c .^ 2)
