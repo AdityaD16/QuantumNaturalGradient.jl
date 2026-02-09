@@ -210,8 +210,9 @@ function step!(o::OptimizationState, dynamic_kwargs, mode::String="IMAG")
     # Saving the energy and other variables
     Observers.update!(o.history; natural_gradient, θ=o.θ, niter=o.niter, energy=o.energy, var_energy, norm_natgrad, norm_θ, natural_gradient.saved_properties...)
 
-    stop = o.callback(; energy_value=o.energy, model=o.θ, misc=get_misc(o), niter=o.niter)
-
+    #stop = o.callback(; energy_value=o.energy, model=o.θ, misc=get_misc(o), niter=o.niter)
+    stop = o.callback(;state=o, misc=get_misc(o), niter=o.niter)
+    
     if o.verbosity >= 2
         @info "iter $(o.niter): $(natural_gradient.Es), ‖θdot‖ = $(norm_natgrad), ‖θ‖ = $(norm_θ), tdvp_error = $(natural_gradient.tdvp_error)"
         flush(stdout); flush(stderr)
