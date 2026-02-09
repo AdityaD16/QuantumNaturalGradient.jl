@@ -128,7 +128,7 @@ function tdvp_error(ng::NaturalGradient)
 end
 
 function tdvp_error!(ng::NaturalGradient)
-    ng.tdvp_error = tdvp_error(ng)
+    ng.tdvp_error = real(tdvp_error(ng))
     return ng.tdvp_error
 end
 
