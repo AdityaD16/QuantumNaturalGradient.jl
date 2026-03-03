@@ -20,7 +20,8 @@ using DataFrames
 using Zygote
 
 using ITensors
-using PastaQ: productstate
+using ITensorMPS
+# using PastaQ: productstate
 
 include("parameters.jl")
 include("distributed_extension.jl")
@@ -36,6 +37,13 @@ include("evolve/evolve.jl")
 include("evolve/evolve_old.jl")
 include("remove_params.jl")
 include("init_params.jl")
+
+function __init__()
+    if occursin(".julia/dev/", pathof(QuantumNaturalGradient))
+        @warn "You are currently on the .julia/dev/ version of QuantumNaturalGradient."
+        flush(stderr)
+    end
+end
 
 
 end # module QuantumNaturalGradient

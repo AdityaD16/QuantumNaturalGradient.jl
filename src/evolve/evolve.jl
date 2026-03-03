@@ -3,6 +3,21 @@ abstract type AbstractIntegrator end
 abstract type AbstractCompositeIntegrator <: AbstractIntegrator end
 abstract type AbstractSchedule end
 
+"""
+Composite natural gradient: keeps the per-term NaturalGradient objects,
+but exposes only the summary fields we want to use in evolve.
+"""
+struct CompositeNaturalGradient{NG, TD}
+    terms::Vector{NG}      # each element is a NaturalGradient
+    Es_mean::Float64       # scalar summary energy
+    θdot::TD               # the update direction actually used for integration step
+    Es_error::Float64      # scalar energy error summary (e.g. sqrt(sum σ_i^2) or whatever you decide)
+    saved_properties::Dict{Symbol,Any}
+end
+
+# Make existing code able to ask for θdot uniformly
+get_θdot(ng::CompositeNaturalGradient; θtype=nothing) = ng.θdot
+
 function Base.getproperty(integrator::AbstractCompositeIntegrator, property::Symbol)
     if property === :lr || property === :step
         return getproperty(integrator.integrator, property)
@@ -11,11 +26,76 @@ function Base.getproperty(integrator::AbstractCompositeIntegrator, property::Sym
     end
 end
 
-function clamp_and_norm!(gradients, clip_val, clip_norm)
-    clamp!(gradients, -clip_val, clip_val)
-    norm(gradients) > clip_norm ? gradients .= (gradients ./ norm(gradients)) .* clip_norm : nothing
+function clamp_and_norm!(gradients::AbstractVector{<:Complex}, clip_val::Real, clip_norm::Real)
+    # Clamp magnitude of each entry to clip_val
+    @inbounds for i in eachindex(gradients)
+        z = gradients[i]
+        r = abs(z)
+        if r > clip_val && r != 0
+            gradients[i] = z * (clip_val / r)
+        end
+    end
+
+    nrm = norm(gradients)
+    if nrm > clip_norm
+        gradients .= (gradients ./ nrm) .* clip_norm
+    end
     return gradients
 end
+
+# RK4 integrator structure
+mutable struct RK4 <: AbstractIntegrator
+    lr::Float64
+    step::Integer
+    use_clipping::Bool
+    clip_norm::Float64
+    clip_val::Float64
+    RK4(;lr=0.05, step=0, use_clipping=false, clip_norm=5.0,
+         clip_val=1.0) =
+        new(lr, step, use_clipping, clip_norm, clip_val)
+end
+
+function (integrator::RK4)(θ::ParameterTypes, Oks_and_Eks_::Function; kwargs...)
+
+    θtype = eltype(θ)
+    h = integrator.lr
+
+    ng1 = NaturalGradient(θ, Oks_and_Eks_; kwargs...)
+    k1 = get_θdot(ng1; θtype=θtype)
+    if integrator.use_clipping
+        clamp_and_norm!(k1, integrator.clip_val, integrator.clip_norm)
+    end
+
+    θ2 = deepcopy(θ)  
+    θ2 .+= (h/2) .* k1
+    ng2 = NaturalGradient(θ2, Oks_and_Eks_; kwargs...)
+    k2 = get_θdot(ng2; θtype=θtype)
+    if integrator.use_clipping
+        clamp_and_norm!(k2, integrator.clip_val, integrator.clip_norm)
+    end
+    
+    θ3 = deepcopy(θ)  
+    θ3 .+= (h/2) .* k2
+    ng3 = NaturalGradient(θ3, Oks_and_Eks_; kwargs...)
+    k3 = get_θdot(ng3; θtype=θtype)
+    if integrator.use_clipping
+        clamp_and_norm!(k3, integrator.clip_val, integrator.clip_norm)
+    end
+
+    θ4 = deepcopy(θ)  
+    θ4 .+= h .* k3
+    ng4 = NaturalGradient(θ4, Oks_and_Eks_; kwargs...)
+    k4 = get_θdot(ng4; θtype=θtype)
+    if integrator.use_clipping 
+        clamp_and_norm!(k4, integrator.clip_val, integrator.clip_norm)
+    end
+    
+    θ .+= (h/6) .* (k1 .+ 2 .* k2 .+ 2 .* k3 .+ k4)
+    integrator.step += 1
+
+    return θ, ng1
+end
+
 
 # Euler integrator structure
 mutable struct Euler <: AbstractIntegrator
@@ -24,11 +104,15 @@ mutable struct Euler <: AbstractIntegrator
     use_clipping::Bool
     clip_norm::Float64
     clip_val::Float64
-    Euler(;lr=0.05, step=0, use_clipping=false, clip_norm=5.0, clip_val=1.0) = new(lr, step, use_clipping, clip_norm, clip_val)
+    write_func::Function
+    basis_func::Function
+    vec::Function
+    gates::Tuple{Vararg{String}}
+    Euler(;lr=0.05, step=0, use_clipping=false, clip_norm=5.0, clip_val=1.0,write_func=nothing,basis_func=nothing,vec=nothing,gates=nothing) = new(lr, step, use_clipping, clip_norm, clip_val,write_func,basis_func,vec,gates)
 end
 
 # Euler integrator step function
-function (integrator::Euler)(θ::ParameterTypes, Oks_and_Eks_; kwargs...)
+function (integrator::Euler)(θ::ParameterTypes, Oks_and_Eks_::Function; kwargs...)
     if kwargs[:timer] !== nothing 
         natural_gradient = @timeit kwargs[:timer] "NaturalGradient" NaturalGradient(θ, Oks_and_Eks_; kwargs...) 
     else
@@ -43,9 +127,74 @@ function (integrator::Euler)(θ::ParameterTypes, Oks_and_Eks_; kwargs...)
     return θ, natural_gradient
 end
 
+function (integrator::Euler)(
+    θ::ParameterTypes,
+    Oks_and_Eks::Tuple{Vararg{Function}};
+    verbosity=0,
+    kwargs...
+)
+    nterms = length(Oks_and_Eks)
+
+    terms = Vector{Any}(undef, nterms)  # store NaturalGradient objects
+
+    θdot_total = nothing
+    Es_total = 0.0
+    err2_total = 0.0
+
+    peps_dot = deepcopy(θ.obj)
+
+    for (i, f) in enumerate(Oks_and_Eks)
+        ng = if haskey(kwargs, :timer) && kwargs[:timer] !== nothing
+            @timeit kwargs[:timer] "NaturalGradient" NaturalGradient(θ, f; kwargs...)
+        else
+            NaturalGradient(θ, f; kwargs...)
+        end
+        terms[i] = ng
+
+        g = get_θdot(ng; θtype=eltype(θ))
+        if integrator.use_clipping
+            clamp_and_norm!(g, integrator.clip_val, integrator.clip_norm)
+        end
+
+        # Optional basis change per term
+        if integrator.gates !== nothing && integrator.gates[i] != "Id"
+            integrator.write_func(peps_dot, g)
+            peps_dot = integrator.basis_func(peps_dot; gate=integrator.gates[i])
+            g = integrator.vec(peps_dot)
+        end
+
+        if θdot_total === nothing
+            θdot_total = similar(g)
+            θdot_total .= 0
+        end
+        θdot_total .+= g
+
+        Ei = real(mean(ng.Es))
+        Es_total += Ei
+        err2_total += energy_error(ng.Es)^2
+
+    end
+
+    θ .+= integrator.lr .* θdot_total
+
+    integrator.step += 1
+
+    Es_error = sqrt(err2_total)
+
+    comp = CompositeNaturalGradient(
+        terms,
+        Es_total,
+        θdot_total,
+        Es_error,
+        Dict{Symbol,Any}(:composite => true, :nterms => nterms)
+    )
+
+    return θ, comp
+end
+
 # Initialize and manage the optimization state
 mutable struct OptimizationState
-    Oks_and_Eks::Function
+    Oks_and_Eks::Union{Function, Tuple{Vararg{Function}}}
     callback::Function
     transform!::Function
     θ
@@ -218,28 +367,78 @@ function step!(o::OptimizationState, dynamic_kwargs)
         end
         return false
     end
-
+    t0 = time_ns()
     o.θ, natural_gradient = @timeit o.timer "integrator" o.integrator(o.θ, o.Oks_and_Eks; sample_nr=o.sample_nr, solver=o.solver, discard_outliers=o.discard_outliers, timer=o.timer, dynamic_kwargs...)
+    dt = (time_ns() - t0) * 1e-9  # seconds
     
     # Transform the optimization state and natural_gradient
     natural_gradient = o.transform!(o, natural_gradient)
     
-    o.energy = real(mean(natural_gradient.Es))
-    var_energy = real(var(natural_gradient.Es))
-    norm_natgrad = norm(get_θdot(natural_gradient; θtype=eltype(o.θ)))
-    norm_θ = norm(o.θ)
+    # Extract energy and norms
+    if natural_gradient isa CompositeNaturalGradient
+        o.energy = natural_gradient.Es_mean
+        norm_natgrad = norm(get_θdot(natural_gradient; θtype=eltype(o.θ)))
+        norm_θ = norm(o.θ)
 
-    # Saving the energy and other variables
-    Observers.update!(o.history; natural_gradient, θ=o.θ, niter=o.niter, energy=o.energy, var_energy, norm_natgrad, norm_θ, natural_gradient.saved_properties...)
+        # Update observer WITHOUT var_energy
+        Observers.update!(o.history;
+            natural_gradient,
+            θ=o.θ,
+            niter=o.niter,
+            energy=o.energy,
+            var_energy=NaN,  # var_energy is not well-defined for CompositeNaturalGradient
+            norm_natgrad,
+            norm_θ,
+            natural_gradient.saved_properties...
+        )
 
-    stop = o.callback(; energy_value=o.energy, model=o.θ, misc=get_misc(o), niter=o.niter)
+    else
+        o.energy = real(mean(natural_gradient.Es))
+        var_energy = real(var(natural_gradient.Es))
+        norm_natgrad = norm(get_θdot(natural_gradient; θtype=eltype(o.θ)))
+        norm_θ = norm(o.θ)
 
+        Observers.update!(o.history;
+            natural_gradient,
+            θ=o.θ,
+            niter=o.niter,
+            energy=o.energy,
+            var_energy,
+            norm_natgrad,
+            norm_θ,
+            natural_gradient.saved_properties...
+        )
+    end
+
+    stop = o.callback(;state=o, energy_value=o.energy, model=o.θ, misc=get_misc(o), niter=o.niter)
+    
     if o.verbosity >= 2
-        @info "iter $(o.niter): $(natural_gradient.Es), ‖θdot‖ = $(norm_natgrad), ‖θ‖ = $(norm_θ), tdvp_error = $(natural_gradient.tdvp_error)"
+        if natural_gradient isa CompositeNaturalGradient
+
+            msg = "iter $(o.niter): E=$(o.energy) ± $(natural_gradient.Es_error), " *
+                "‖θdot‖=$(norm_natgrad), ‖θ‖=$(norm_θ), time_per_step=$(round(dt, sigdigits=3))s " 
+
+            if o.verbosity >= 3
+                comp_lines = join([
+                    "Component $i: E=$(real(mean(ng.Es))) ± $(energy_error(ng.Es)), " *
+                    "‖θ̇‖=$(norm(get_θdot(ng)))"
+                    for (i, ng) in enumerate(natural_gradient.terms)
+                ], "\n")
+
+                msg *= "\n" * comp_lines
+            end
+
+            @info msg
+
+        else
+            @info "iter $(o.niter): $(natural_gradient.Es), " *
+                "‖θdot‖=$(norm_natgrad), ‖θ‖=$(norm_θ), " *
+                "tdvp_error=$(natural_gradient.tdvp_error)"
+        end
+
         flush(stdout)
         flush(stderr)
     end
-    
     if stop === false
         return false
     end

@@ -113,44 +113,44 @@ function Ok_and_Ek(θ, construct_mps, H::MPO; force_holomorphic=false, kwargs...
 end
 
 
-function Ok_and_Ek(ψ::MPS, H::MPO, sample_, pull; θ_complex=false, check_holomorpic=false, kwargs...)
-    hilbert = siteinds(ψ)
+# function Ok_and_Ek(ψ::MPS, H::MPO, sample_, pull; θ_complex=false, check_holomorpic=false, kwargs...)
+#     hilbert = siteinds(ψ)
     
-    mps_sample = productstate(hilbert, sample_ .- 1)
-    Ek = inner(mps_sample', H, ψ; kwargs...)
+#     mps_sample = productstate(hilbert, sample_ .- 1)
+#     Ek = inner(mps_sample', H, ψ; kwargs...)
 
-    function f(ψ)
-        ψσ = inner(mps_sample, ψ; kwargs...)
-        return ψσ, log(Complex(ψσ))
-    end
+#     function f(ψ)
+#         ψσ = inner(mps_sample, ψ; kwargs...)
+#         return ψσ, log(Complex(ψσ))
+#     end
 
-    (ψσ, logψσ), pull_logψσ = pullback(f, ψ)
+#     (ψσ, logψσ), pull_logψσ = pullback(f, ψ)
 
-    full_pull = x -> pull(pull_logψσ((nothing, x))...)
+#     full_pull = x -> pull(pull_logψσ((nothing, x))...)
 
-    g = complex_gradient(full_pull; complex_input=θ_complex, complex_output=ψσ isa Complex, check_holomorpic)
+#     g = complex_gradient(full_pull; complex_input=θ_complex, complex_output=ψσ isa Complex, check_holomorpic)
 
-    return g, Ek / ψσ, logψσ
-end
+#     return g, Ek / ψσ, logψσ
+# end
 
-function Ok_and_Ek(ψ::MPS, loglike::Number, H::MPO, sample_, pull; θ_complex=false, check_holomorpic=false, kwargs...)
-    """
-    Compute the gradient and energy of the wave function ψ.
-    """
-    hilbert = siteinds(ψ)
+# function Ok_and_Ek(ψ::MPS, loglike::Number, H::MPO, sample_, pull; θ_complex=false, check_holomorpic=false, kwargs...)
+#     """
+#     Compute the gradient and energy of the wave function ψ.
+#     """
+#     hilbert = siteinds(ψ)
     
-    mps_sample = productstate(hilbert, sample_ .- 1)
-    Ek = real(inner(mps_sample', H, ψ; kwargs...))
+#     mps_sample = productstate(hilbert, sample_ .- 1)
+#     Ek = real(inner(mps_sample', H, ψ; kwargs...))
 
-    function f(ψ)
-        ψσ = inner(mps_sample, ψ; kwargs...)
-        return ψσ, log(Complex(ψσ))
-    end
+#     function f(ψ)
+#         ψσ = inner(mps_sample, ψ; kwargs...)
+#         return ψσ, log(Complex(ψσ))
+#     end
     
-    (ψσ, logψσ), pull_logψσ = pullback(f, ψ)
-    # sum of the log(psi) + loglike/2
+#     (ψσ, logψσ), pull_logψσ = pullback(f, ψ)
+#     # sum of the log(psi) + loglike/2
     
-    pull_ = x -> pull((pull_logψσ((nothing, x))..., x./2))
-    Ok = complex_gradient(pull_; complex_input=θ_complex, complex_output=ψσ isa Complex, check_holomorpic)
-    return Ok, Ek / ψσ, logψσ + loglike/2
-end
+#     pull_ = x -> pull((pull_logψσ((nothing, x))..., x./2))
+#     Ok = complex_gradient(pull_; complex_input=θ_complex, complex_output=ψσ isa Complex, check_holomorpic)
+#     return Ok, Ek / ψσ, logψσ + loglike/2
+# end

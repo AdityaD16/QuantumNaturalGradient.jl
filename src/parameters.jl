@@ -12,6 +12,13 @@ Base.BroadcastStyle(t::Broadcast.Style{Parameters{T}}, ::Broadcast.BroadcastStyl
 Base.broadcasted(f::F, p::Parameters, bc::Base.Broadcast.Broadcasted) where F = Base.Broadcast.Broadcasted((f), (p, bc))
 Base.eltype(p::Parameters{T}) where T = eltype(p.obj)
 
+Base.broadcastable(p::Parameters) = p
+
+# Give it a shape/size by delegating to the vectorized parameterization
+# (convert(Vector, p.obj) should already work in your codebase)
+Base.length(p::Parameters) = length(convert(Vector, p.obj))
+Base.axes(p::Parameters)   = axes(convert(Vector, p.obj))
+
 function LinearAlgebra.norm(p::Parameters{T}) where T
     error("norm not implemented for Parameters{$T}.")
 end
