@@ -17,6 +17,12 @@ function (solver::LinearSolveWrapper)(M::AbstractMatrix, v::AbstractArray)
     else
         M = Hermitian(M)
     end
+
+    if eltype(M)!= eltype(v)
+        if eltype(M) == ComplexF64 
+            v = ComplexF64.(v)
+        end
+    end
     
     prob = LinearProblem(M, v)
     sol = solve(prob, solver.alg)

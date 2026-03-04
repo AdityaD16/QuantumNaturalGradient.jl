@@ -420,7 +420,7 @@ function step!(o::OptimizationState, dynamic_kwargs)
 
             if o.verbosity >= 3
                 comp_lines = join([
-                    "Component $i: E=$(real(mean(ng.Es))) ± $(energy_error(ng.Es)), " *
+                    "Component $i: $(ng.Es), " *
                     "‖θ̇‖=$(norm(get_θdot(ng)))"
                     for (i, ng) in enumerate(natural_gradient.terms)
                 ], "\n")
