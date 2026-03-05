@@ -432,7 +432,7 @@ function step!(o::OptimizationState, dynamic_kwargs)
 
         else
             @info "iter $(o.niter): $(natural_gradient.Es), " *
-                "‖θdot‖=$(norm_natgrad), ‖θ‖=$(norm_θ), " *
+                "‖θdot‖=$(norm_natgrad), ‖θ‖=$(norm_θ), time_per_step=$(round(dt, sigdigits=3))s, " *
                 "tdvp_error=$(natural_gradient.tdvp_error)"
         end
 
