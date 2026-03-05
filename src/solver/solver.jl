@@ -17,18 +17,24 @@ function solve_T(solver::AbstractSolver, J::Jacobian, Es::EnergySummary; timer=T
     return θdot
 end
 
-function (solver::AbstractSolver)(ng::NaturalGradient; method=:auto, compute_error=true, kwargs...)
+function (solver::AbstractSolver)(ng::NaturalGradient; method=:auto, compute_error=true, march=false, kwargs...)
+
+    if march && !(solver isa MarchSolver)
+        Tθ = eltype(centered(ng.J))                 # <- real or complex
+        solver = MarchSolver(solver, Tθ)            # <- typed wrapper, persists state
+    end
+
     if method === :T || (method === :auto && nr_samples(ng.J) < nr_parameters(ng.J))
         ng.θdot = solve_T(solver, ng.J, ng.Es; kwargs...)
     else
         ng.θdot = solve_S(solver, ng.J, get_gradient(ng) ./ 2; kwargs...)
     end
+
     if compute_error
         tdvp_error!(ng)
     end
     return ng
 end
-
 
 function (solver::AbstractSolver)(M::AbstractMatrix, v::AbstractArray, double::Bool; method=:auto, kwargs...)
     if double
@@ -54,3 +60,4 @@ include("reduce_solver.jl")
 include("eigen_solver_autocut.jl")
 include("LinearSolveWrapper.jl")
 include("SlowKrylovSolver.jl")
+include("march_solver.jl")
