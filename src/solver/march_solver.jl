@@ -55,15 +55,24 @@ function _init!(ms::MarchSolver{S,Tθ,TR}, B::Int, P::Int) where {S,Tθ,TR}
 end
 
 # MARCH in the T/Woodbury form (recommended when B << P)
-function solve_T(ms::MarchSolver, J::Jacobian, Es::EnergySummary;
-                 timer=TimerOutput(), kwargs...)
+function solve_T(ms::MarchSolver{S,Tθ,TR}, J::Jacobian, Es::EnergySummary;
+                 timer=TimerOutput(), kwargs...) where {S,Tθ,TR}
 
     O = centered(J)                # B×P (Matrix or Transpose wrapper)
-    ε = centered(Es)               # length B (typically ComplexF64 or Real -> promote)
+    ε = -centered(Es)               # length B (typically ComplexF64 or Real -> promote)
 
     B = nr_samples(J)
     P = nr_parameters(J)
-    ms.initialized || _init!(ms, B, P)
+
+    if !ms.initialized || length(ms.phi) != P
+        _init!(ms, B, P)
+    elseif size(ms.Os,1) != B
+        # only resize sample-space buffers
+        ms.Os  = Matrix{Tθ}(undef, B, P)
+        ms.A   = Matrix{Tθ}(undef, B, B)
+        ms.rhs = similar(ms.rhs, B)
+        ms.x   = similar(ms.x, B)
+    end
 
     @assert size(O,1) == B && size(O,2) == P
 
@@ -75,7 +84,7 @@ function solve_T(ms::MarchSolver, J::Jacobian, Es::EnergySummary;
         # column scaling: Os[:,j] *= s[j]
         # s[j] = v[j]^(-1/4)
         @inbounds for j in 1:P
-            s = ms.v[j]^(-0.25)  # = 1 / v^(1/4)
+            s = inv(sqrt(sqrt(ms.v[j]))) # = 1 / v^(1/4)
             @views ms.Os[:, j] .*= s
         end
     end
@@ -83,7 +92,7 @@ function solve_T(ms::MarchSolver, J::Jacobian, Es::EnergySummary;
     # --- A = Os * Os' + λ I (B×B) ---
     @timeit timer "march_build_A" begin
         # gemm! does: A = 1*Os*Os' + 0*A
-        BLAS.gemm!('N', 'C', ComplexF64(1), ms.Os, ms.Os, ComplexF64(0), ms.A)
+        BLAS.gemm!('N', 'C', one(Tθ), ms.Os, ms.Os, zero(Tθ), ms.A)
         @inbounds for i in 1:B
             ms.A[i,i] += ms.λ
         end
@@ -92,7 +101,7 @@ function solve_T(ms::MarchSolver, J::Jacobian, Es::EnergySummary;
     # --- rhs = ε - O*phi ---
     @timeit timer "march_rhs" begin
         # rhs := ε
-        ms.rhs .= ComplexF64.(ε)
+        ms.rhs .= Tθ.(ε)
 
         # rhs -= O*phi   (mul! works for Matrix and Transpose)
         # tmpB = O*phi, we can reuse ms.x as a temp here
@@ -113,7 +122,7 @@ function solve_T(ms::MarchSolver, J::Jacobian, Es::EnergySummary;
         θdot = similar(ms.phi)
         @inbounds for j in 1:P
             Dj = inv(sqrt(ms.v[j]))      # v^{-1/2}
-            θdot[j] = -(Dj * ms.tmpP[j]) + ms.phi[j]
+            θdot[j] = (Dj * ms.tmpP[j]) + ms.phi[j]
         end
 
         # update moments
