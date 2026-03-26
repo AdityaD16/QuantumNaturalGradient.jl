@@ -99,7 +99,7 @@ end
 
 # Euler integrator structure
 mutable struct Euler <: AbstractIntegrator
-    lr::Float64
+    lr::Real
     step::Integer
     use_clipping::Bool
     clip_norm::Float64
@@ -113,6 +113,10 @@ end
 
 # Euler integrator step function
 function (integrator::Euler)(θ::ParameterTypes, Oks_and_Eks_::Function; kwargs...)
+    
+    if eltype(integrator.lr) != real(eltype(θ))
+        integrator.lr = real(eltype(θ))(integrator.lr)
+    end
     if kwargs[:timer] !== nothing 
         natural_gradient = @timeit kwargs[:timer] "NaturalGradient" NaturalGradient(θ, Oks_and_Eks_; kwargs...) 
     else
@@ -133,6 +137,9 @@ function (integrator::Euler)(
     verbosity=0,
     kwargs...
 )
+    if eltype(integrator.lr) != real(eltype(θ))
+        integrator.lr = real(eltype(θ))(integrator.lr)
+    end
     nterms = length(Oks_and_Eks)
 
     terms = Vector{Any}(undef, nterms)  # store NaturalGradient objects

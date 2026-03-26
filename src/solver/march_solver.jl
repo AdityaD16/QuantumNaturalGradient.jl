@@ -28,7 +28,7 @@ end
 # Helper: pick the real scalar type for v from Tθ
 _realtype(::Type{T}) where {T} = typeof(real(zero(float(T))))  # ComplexF64->Float64, Float32->Float32, etc.
 
-function MarchSolver(base::S, ::Type{Tθ}; μ=0.95, β=0.995, eps=1e-8, λ=0) where {S<:AbstractSolver,Tθ<:Number}
+function MarchSolver(base::S, ::Type{Tθ}; μ=0.95, β=0.995, eps=1e-8, λ=1e-3) where {S<:AbstractSolver,Tθ<:Number}
     TR = _realtype(Tθ)
     return MarchSolver{S,Tθ,TR}(
         base, TR(μ), TR(β), TR(eps), TR(λ),

@@ -1,20 +1,48 @@
 struct EnergySummary{T <: Number}
     data::Vector{T}
     mean::T
-    std_of_mean::Float64
-    var::Float64
-    std_of_var::Float64
-    importance_weights::Union{Vector{Float64}, Nothing}
+    std_of_mean::Real
+    var::Real
+    std_of_var::Real
+    importance_weights::Union{Vector{<:Real}, Nothing} 
     saved_properties
 
-    EnergySummary(data::Vector{T}, mean::T, std_of_mean::Float64, var::Float64, std_of_var::Float64, importance_weights::Union{Vector{Float64}, Nothing}; saved_properties=nothing) where T <: Number =
+    EnergySummary(data::Vector{T}, mean::T, std_of_mean::Real, var::Real, std_of_var::Real, importance_weights::Union{Vector{<:Real}, Nothing}; saved_properties=nothing) where T <: Number =
         new{T}(data, mean, std_of_mean, var, std_of_var, importance_weights, saved_properties)
 end
 
 EnergySummary(ψ::MPS, H::MPO; sample_nr=1000) = EnergySummary([Ek(ψ, H) for _ in 1:sample_nr])
 
-function EnergySummary(Eks::Vector{Complex{Float64}}; importance_weights=nothing, mean_=nothing, var_=nothing, kwargs...)
-    if any(imag.(Eks) .> 1e-10)
+
+# Generic version for arbitrary precision (real and complex)
+function EnergySummary(Eks::Vector{T}; importance_weights=nothing, mean_=nothing, var_=nothing, kwargs...) where {T<:AbstractFloat}
+    if mean_ === nothing || var_ === nothing
+        mean_, var_ = wmean_and_var(Eks; weights_=importance_weights)
+    end
+    Eks_c = Eks .- mean_
+    local std_of_mean
+    local std_of_var
+    if importance_weights !== nothing
+
+        # The estimator for the mean energy is defined as X_k = E_k * w_k; therefore, the variance of X_k represents the error of the estimator.
+        std_of_mean = std(Eks_c .* importance_weights)
+
+        # The estimator for the variance of the energy is defined as X_k = (E_k - <E>)^2 * w_k; similarly, the variance of X_k represents the error of this estimator.
+        std_of_var = std((Eks_c .^ 2) .* importance_weights)
+
+        # The Eks are multiplied by the square root of the importance weights. This ensures that the product with (Oks * sqrt(importance_weights)) correctly recovers the importance weights to the first power.
+        Eks_c = Eks_c .* sqrt.(importance_weights)
+    else
+        std_of_mean = sqrt(var_)
+        std_of_var = std(Eks_c .^ 2)
+    end
+    
+    return EnergySummary(Eks_c, mean_, std_of_mean, var_, std_of_var, importance_weights; kwargs...)
+end
+
+function EnergySummary(Eks::Vector{Complex{T}}; importance_weights=nothing, mean_=nothing, var_=nothing, kwargs...) where {T<:AbstractFloat}
+    tol = convert(T, 1e-10)
+    if any(abs.(imag.(Eks)) .> tol)
         if mean_ === nothing || var_ === nothing
             mean_, var_ = wmean_and_var(Eks; weights_=importance_weights)
         end
@@ -26,10 +54,10 @@ function EnergySummary(Eks::Vector{Complex{Float64}}; importance_weights=nothing
         if importance_weights !== nothing
             # The estimator for the mean energy is defined as X_k = E_k * w_k; therefore, the variance of X_k represents the error of the estimator.
             std_of_mean = std(real.(Eks_c .* importance_weights))
-            
+
             # The estimator for the variance of the energy is defined as X_k = (E_k - <E>)^2 * w_k; similarly, the variance of X_k represents the error of this estimator.
             std_of_var = std(real.((Eks_c .* conj(Eks_c)) .* importance_weights))
-            
+
             # The Eks are multiplied by the square root of the importance weights. This ensures that the product with (Oks * sqrt(importance_weights)) correctly recovers the importance weights to the first power.
             Eks_c = Eks_c .* sqrt.(importance_weights)
         else
@@ -37,35 +65,63 @@ function EnergySummary(Eks::Vector{Complex{Float64}}; importance_weights=nothing
             std_of_var = std(Eks_c .* conj(Eks_c))
         end
         return EnergySummary(Eks_c, mean_, std_of_mean, real.(var_), real.(std_of_var), importance_weights; kwargs...)
+
     end
     return EnergySummary(real.(Eks); importance_weights, kwargs...)
 end
+# function EnergySummary(Eks::Vector{Complex{Float64}}; importance_weights=nothing, mean_=nothing, var_=nothing, kwargs...)
+#     if any(imag.(Eks) .> 1e-10)
+#         if mean_ === nothing || var_ === nothing
+#             mean_, var_ = wmean_and_var(Eks; weights_=importance_weights)
+#         end
+#         Eks_c = Eks .- mean_
 
-function EnergySummary(Eks::Vector{Float64}; importance_weights=nothing, mean_=nothing, var_=nothing, kwargs...)
-    if mean_ === nothing || var_ === nothing
-        mean_, var_ = wmean_and_var(Eks; weights_=importance_weights)
-    end
-    Eks_c = real.(Eks .- mean_)
+#         local std_of_mean
+#         local std_of_var
 
-    local std_of_mean
-    local std_of_var
+#         if importance_weights !== nothing
+#             # The estimator for the mean energy is defined as X_k = E_k * w_k; therefore, the variance of X_k represents the error of the estimator.
+#             std_of_mean = std(real.(Eks_c .* importance_weights))
+            
+#             # The estimator for the variance of the energy is defined as X_k = (E_k - <E>)^2 * w_k; similarly, the variance of X_k represents the error of this estimator.
+#             std_of_var = std(real.((Eks_c .* conj(Eks_c)) .* importance_weights))
+            
+#             # The Eks are multiplied by the square root of the importance weights. This ensures that the product with (Oks * sqrt(importance_weights)) correctly recovers the importance weights to the first power.
+#             Eks_c = Eks_c .* sqrt.(importance_weights)
+#         else
+#             std_of_mean = sqrt(real.(var_))
+#             std_of_var = std(Eks_c .* conj(Eks_c))
+#         end
+#         return EnergySummary(Eks_c, mean_, std_of_mean, real.(var_), real.(std_of_var), importance_weights; kwargs...)
+#     end
+#     return EnergySummary(real.(Eks); importance_weights, kwargs...)
+# end
 
-    if importance_weights !== nothing
-        # The estimator for the mean energy is defined as X_k = E_k * w_k; therefore, the variance of X_k represents the error of the estimator.
-        std_of_mean = std(real.(Eks_c .* importance_weights))
+# function EnergySummary(Eks::Vector{Float64}; importance_weights=nothing, mean_=nothing, var_=nothing, kwargs...)
+#     if mean_ === nothing || var_ === nothing
+#         mean_, var_ = wmean_and_var(Eks; weights_=importance_weights)
+#     end
+#     Eks_c = real.(Eks .- mean_)
+
+#     local std_of_mean
+#     local std_of_var
+
+#     if importance_weights !== nothing
+#         # The estimator for the mean energy is defined as X_k = E_k * w_k; therefore, the variance of X_k represents the error of the estimator.
+#         std_of_mean = std(real.(Eks_c .* importance_weights))
         
-        # The estimator for the variance of the energy is defined as X_k = (E_k - <E>)^2 * w_k; similarly, the variance of X_k represents the error of this estimator.
-        std_of_var = std(real.(Eks_c .^2 .* importance_weights))
+#         # The estimator for the variance of the energy is defined as X_k = (E_k - <E>)^2 * w_k; similarly, the variance of X_k represents the error of this estimator.
+#         std_of_var = std(real.(Eks_c .^2 .* importance_weights))
         
-        # The Eks are multiplied by the square root of the importance weights. This ensures that the product with (Oks * sqrt(importance_weights)) correctly recovers the importance weights to the first power.
-        Eks_c = Eks_c .* sqrt.(importance_weights)
-    else
-        std_of_mean = sqrt(real.(var_))
-        std_of_var = std(Eks_c .^ 2)
-    end
+#         # The Eks are multiplied by the square root of the importance weights. This ensures that the product with (Oks * sqrt(importance_weights)) correctly recovers the importance weights to the first power.
+#         Eks_c = Eks_c .* sqrt.(importance_weights)
+#     else
+#         std_of_mean = sqrt(real.(var_))
+#         std_of_var = std(Eks_c .^ 2)
+#     end
 
-    return EnergySummary(Eks_c, mean_, std_of_mean, var_, std_of_var, importance_weights; kwargs...)
-end
+#     return EnergySummary(Eks_c, mean_, std_of_mean, var_, std_of_var, importance_weights; kwargs...)
+# end
 
 Statistics.mean(Es::EnergySummary) = Es.mean
 Statistics.var(Es::EnergySummary) = Es.var

@@ -6,14 +6,14 @@ mutable struct NaturalGradient{T <: Number}
     samples
     J::Jacobian{T}
     Es::EnergySummary
-    logψσs::Vector{Complex{Float64}}
+    logψσs::Vector{<:Complex}
     grad
     θdot
     tdvp_error::Union{Real, Nothing}
     importance_weights::Union{Vector{<:Real}, Nothing}
     saved_properties
     function NaturalGradient(samples, J::Jacobian{T}, Es::EnergySummary,
-         logψσs::Vector{Complex{Float64}}, θdot=nothing,
+         logψσs::Vector{<:Complex}, θdot=nothing,
           tdvp_error::Union{Float64, Nothing}=nothing;
           importance_weights=nothing, grad=nothing, saved_properties=nothing) where {T <: Number}
 
@@ -38,7 +38,7 @@ function get_θdot(ng::NaturalGradient; θtype=ComplexF64)
         if θtype <: Real
             return θtype.(real.(ng.θdot))
         else
-            return ng.θdot
+            return θtype.(ng.θdot)
         end
     end
 end
